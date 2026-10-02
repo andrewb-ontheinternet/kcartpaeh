@@ -48,12 +48,15 @@ make DESTDIR=appdir install
 cp $ZSTD ./appdir/usr/bin/zstd
 
 # Ensure we prefer the bundled libs also when calling dlopen, cf.: https://github.com/KDAB/hotspot/issues/89
+# We still allow a user-supplied QT_PLUGIN_PATH to be searched *after* the bundled
+# plugins though (rather than wiping it outright), so e.g. a host-installed platform
+# theme plugin (QT_QPA_PLATFORMTHEME=qt5ct/qt6ct) can still be found and loaded.
 mv "./appdir/usr/bin/heaptrack_gui" "./appdir/usr/bin/heaptrack_gui_bin"
 cat << WRAPPER_SCRIPT > ./appdir/usr/bin/heaptrack_gui
 #!/bin/bash
 f="\$(readlink -f "\${0}")"
 d="\$(dirname "\$f")"
-unset QT_PLUGIN_PATH
+export QT_PLUGIN_PATH="\$d/../plugins\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}"
 LD_LIBRARY_PATH="\$d/../lib:\$LD_LIBRARY_PATH" "\$d/heaptrack_gui_bin" "\$@"
 WRAPPER_SCRIPT
 chmod +x ./appdir/usr/bin/heaptrack_gui
@@ -101,8 +104,21 @@ linuxdeploy --appdir appdir --plugin qt \
     -l /usr/lib64/libwayland-egl.so \
     -l "$RUSTC_DEMANGLE_LIB" \
     -i "$srcdir/src/analyze/gui/128-apps-heaptrack.png" --icon-filename=heaptrack \
-    -d "./appdir/usr/share/applications/org.kde.heaptrack.desktop" \
-    --output appimage
+    -d "./appdir/usr/share/applications/org.kde.heaptrack.desktop"
+
+# The qt plugin above generates an apprun hook that unconditionally forces
+# QT_QPA_PLATFORMTHEME=gtk2 on GNOME/XFCE-like desktops (clobbering anything the
+# user set, and "gtk2" isn't even a real Qt6 platform theme). Patch it to only
+# apply that default if QT_QPA_PLATFORMTHEME isn't already set, so e.g.
+# QT_QPA_PLATFORMTHEME=qt5ct/qt6ct exported by the user is respected.
+qt_hook="appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"
+if [ -f "$qt_hook" ]; then
+    sed -i 's/export QT_QPA_PLATFORMTHEME=gtk2/: "${QT_QPA_PLATFORMTHEME:=gtk2}"; export QT_QPA_PLATFORMTHEME/' "$qt_hook"
+else
+    echo "WARNING: $qt_hook not found, QT_QPA_PLATFORMTHEME may be overridden on some desktops" >&2
+fi
+
+appimagetool appdir
 
 mkdir -p "$outdir"
 mv Heaptrack*x86_64.AppImage "$outdir/heaptrack-$gitversion-x86_64.AppImage"
