@@ -4,9 +4,10 @@ set -e
 
 srcdir=$(readlink -f "$1")
 buildir=$(readlink -f "$2")
+outdir=$(readlink -f "${3:-$(dirname "$buildir")}")
 
 if [ -z "$srcdir" ] || [ -z "$buildir" ]; then
-    echo "usage: $0 <srcdir> <builddir>"
+    echo "usage: $0 <srcdir> <builddir> [outputdir]"
     exit 1
 fi
 
@@ -21,6 +22,16 @@ fi
 
 if [ -z "$(which linuxdeploy)" ]; then
     echo "ERROR: cannot find linuxdeploy in PATH"
+    exit 1
+fi
+
+# librustc_demangle.so, built from https://github.com/rust-lang/rustc-demangle
+# by tools/Dockerfile. heaptrack dlopen()s this at runtime (see
+# src/interpret/demangler.cpp) to demangle Rust symbol names.
+RUSTC_DEMANGLE_LIB="${RUSTC_DEMANGLE_LIB:-/opt/rustc-demangle/librustc_demangle.so}"
+
+if [ ! -f "$RUSTC_DEMANGLE_LIB" ]; then
+    echo "ERROR: cannot find librustc_demangle.so at $RUSTC_DEMANGLE_LIB"
     exit 1
 fi
 
@@ -88,8 +99,10 @@ linuxdeploy --appdir appdir --plugin qt \
     -l /usr/lib64/libfreetype.so.6 \
     -l /usr/lib64/libfontconfig.so.1 \
     -l /usr/lib64/libwayland-egl.so \
+    -l "$RUSTC_DEMANGLE_LIB" \
     -i "$srcdir/src/analyze/gui/128-apps-heaptrack.png" --icon-filename=heaptrack \
     -d "./appdir/usr/share/applications/org.kde.heaptrack.desktop" \
     --output appimage
 
-mv Heaptrack*x86_64.AppImage "/github/workspace/heaptrack-$gitversion-x86_64.AppImage"
+mkdir -p "$outdir"
+mv Heaptrack*x86_64.AppImage "$outdir/heaptrack-$gitversion-x86_64.AppImage"
